@@ -91,7 +91,8 @@ namespace UnitTestBoilerplate.Commands
 				var menuItem = new OleMenuCommand(this.MenuItemCallback, menuCommandId);
 				menuItem.BeforeQueryStatus += (sender, args) =>
 				{
-					menuItem.Visible = SolutionUtilities.GetSelectedFiles(dte).Any(file => file != null && file.FilePath != null && file.FilePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
+					menuItem.Visible = SolutionUtilities.GetSelectedFiles(dte).Any(file => file != null && file.FilePath != null && file.FilePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+						|| SolutionUtilities.GetSelectedFunction(dte) != null;
 				};
 
 				commandService.AddCommand(menuItem);

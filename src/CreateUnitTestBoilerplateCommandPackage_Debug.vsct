@@ -53,6 +53,9 @@
       <Group guid="guidCreateUnitTestBoilerplateCommandPackageCmdSet" id="DebugMenuGroup" priority="0x0600">
         <Parent guid="guidCreateUnitTestBoilerplateCommandPackageCmdSet" id="DebugTopLevelMenu" />
       </Group>
+      <Group guid="guidCreateUnitTestBoilerplateCommandPackageCmdSet" id="MyMenuGroup" priority="0x0600">
+          <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_CODEWIN"/>
+      </Group>
     </Groups>
 
     <!--Buttons section. -->

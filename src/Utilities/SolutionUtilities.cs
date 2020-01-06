@@ -23,9 +23,23 @@ namespace UnitTestBoilerplate.Utilities
 				.Select(i =>
 				{
 					var projectItem = i.Object as ProjectItem;
+					if (projectItem == null)
+					{
+						return null;
+					}
 					return new ProjectItemSummary(projectItem);
 				})
 				.ToList();
+		}
+
+		public static CodeFunction2 GetSelectedFunction(DTE2 dte)
+		{
+			TextSelection selectedText = dte.ActiveWindow.Selection as TextSelection;
+			if (selectedText == null)
+			{
+				return null;
+			}
+			return selectedText.ActivePoint.CodeElement[vsCMElement.vsCMElementFunction] as CodeFunction2;
 		}
 
 		public static IList<Project> GetProjects(DTE2 dte)

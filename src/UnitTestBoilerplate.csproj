@@ -195,6 +195,7 @@
     <Compile Include="Model\MethodArgumentDescriptor.cs" />
     <Compile Include="Model\MethodDescriptor.cs" />
     <Compile Include="Model\SelfTestDetectionTest.cs" />
+    <Compile Include="Model\TestFileContext.cs" />
     <Compile Include="Services\IBoilerplateSettings.cs" />
     <Compile Include="Services\MockBoilerplateSettings.cs" />
     <Compile Include="Services\FrameworkPickerService.cs" />

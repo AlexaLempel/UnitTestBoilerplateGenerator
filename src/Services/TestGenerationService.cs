@@ -41,7 +41,8 @@ namespace UnitTestBoilerplate.Services
 			ProjectItemSummary selectedFile,
 			EnvDTE.Project targetProject, 
 			TestFramework testFramework,
-			MockFramework mockFramework)
+			MockFramework mockFramework,
+			EnvDTE80.CodeFunction2 selectedFunction = null)
 		{
 			string sourceProjectDirectory = Path.GetDirectoryName(selectedFile.ProjectFilePath);
 			string selectedFileDirectory = Path.GetDirectoryName(selectedFile.FilePath);
@@ -53,11 +54,14 @@ namespace UnitTestBoilerplate.Services
 
 			string relativePath = this.GetRelativePath(selectedFile);
 
-			TestGenerationContext context = await this.CollectTestGenerationContextAsync(selectedFile, targetProject, testFramework, mockFramework);
-
-			string unitTestContents = this.GenerateUnitTestContents(context);
+			TestGenerationContext context = await this.CollectTestGenerationContextAsync(selectedFile, targetProject, testFramework, mockFramework, selectedFunction);
 
 			string testFolder = Path.Combine(Path.GetDirectoryName(targetProject.FullName), relativePath);
+
+			if (!Directory.Exists(testFolder))
+			{
+				Directory.CreateDirectory(testFolder);
+			}
 
 			string testFileNameBase = StringUtilities.ReplaceTokens(
 				this.Settings.FileNameTemplate,
@@ -75,14 +79,16 @@ namespace UnitTestBoilerplate.Services
 
 			string testPath = Path.Combine(testFolder, testFileNameBase + ".cs");
 
+			string unitTestContents;
+
 			if (File.Exists(testPath))
 			{
-				throw new InvalidOperationException("Test file already exists.");
+				var testFileContext = await this.CollectTestFileContextAsync(testPath);
+				unitTestContents = this.GenerateUnitTestContents(context, testFileContext);
 			}
-
-			if (!Directory.Exists(testFolder))
+			else
 			{
-				Directory.CreateDirectory(testFolder);
+				unitTestContents = this.GenerateUnitTestContents(context);
 			}
 
 			File.WriteAllText(testPath, unitTestContents);
@@ -95,7 +101,8 @@ namespace UnitTestBoilerplate.Services
 			string targetFilePath,
 			string targetProjectNamespace,
 			TestFramework testFramework,
-			MockFramework mockFramework)
+			MockFramework mockFramework,
+			EnvDTE80.CodeFunction2 selectedFunction = null)
 		{
 			string sourceProjectDirectory = Path.GetDirectoryName(selectedFile.ProjectFilePath);
 			string selectedFileDirectory = Path.GetDirectoryName(selectedFile.FilePath);
@@ -105,7 +112,7 @@ namespace UnitTestBoilerplate.Services
 				throw new InvalidOperationException("Error with selected file paths.");
 			}
 
-			TestGenerationContext context = await this.CollectTestGenerationContextAsync(selectedFile, targetProjectNamespace, testFramework, mockFramework);
+			TestGenerationContext context = await this.CollectTestGenerationContextAsync(selectedFile, targetProjectNamespace, testFramework, mockFramework, selectedFunction);
 
 			string unitTestContents = this.GenerateUnitTestContents(context);
 
@@ -143,11 +150,75 @@ namespace UnitTestBoilerplate.Services
 			return relativePath;
 		}
 
+		private async Task<TestFileContext> CollectTestFileContextAsync(
+			string testFilePath)
+		{
+			Microsoft.CodeAnalysis.Solution solution = CreateUnitTestBoilerplateCommandPackage.VisualStudioWorkspace.CurrentSolution;
+			DocumentId documentId = solution.GetDocumentIdsWithFilePath(testFilePath).FirstOrDefault();
+			if (documentId == null)
+			{
+				throw new InvalidOperationException("Could not find document in solution with file path " + testFilePath);
+			}
+
+			var document = solution.GetDocument(documentId);
+
+			SyntaxNode root = await document.GetSyntaxRootAsync();
+			SemanticModel semanticModel = await document.GetSemanticModelAsync();
+
+			SyntaxNode firstClassDeclaration = root.DescendantNodes().FirstOrDefault(node => node.Kind() == SyntaxKind.ClassDeclaration);
+
+			if (firstClassDeclaration == null)
+			{
+				throw new InvalidOperationException("Could not find class declaration.");
+			}
+
+			if (firstClassDeclaration.ChildTokens().Any(node => node.Kind() == SyntaxKind.AbstractKeyword))
+			{
+				throw new InvalidOperationException("Cannot unit test an abstract class.");
+			}
+
+			SyntaxToken classIdentifierToken = firstClassDeclaration.ChildTokens().FirstOrDefault(n => n.Kind() == SyntaxKind.IdentifierToken);
+			if (classIdentifierToken == default(SyntaxToken))
+			{
+				throw new InvalidOperationException("Could not find class identifier.");
+			}
+
+			NamespaceDeclarationSyntax namespaceDeclarationSyntax = null;
+			if (!TypeUtilities.TryGetParentSyntax(firstClassDeclaration, out namespaceDeclarationSyntax))
+			{
+				throw new InvalidOperationException("Could not find class namespace.");
+			}
+
+			List<string> usingNamespaces = ((CompilationUnitSyntax)root).Usings.Select(u => u.Name.ToString()).ToList();
+
+			string classFullName = namespaceDeclarationSyntax.Name + "." + classIdentifierToken;
+			INamedTypeSymbol classType = semanticModel.Compilation.GetTypeByMetadataName(classFullName);
+
+			string className = classIdentifierToken.ToString();
+
+			SyntaxNode constructorDeclaration = firstClassDeclaration.ChildNodes().FirstOrDefault(n => n.Kind() == SyntaxKind.ConstructorDeclaration);
+
+			// Find public method declarations
+			IList<MethodDeclarationSyntax> methodDeclarations = new List<MethodDeclarationSyntax>();
+			foreach (MethodDeclarationSyntax methodDeclaration in firstClassDeclaration.ChildNodes().Where(n => n.Kind() == SyntaxKind.MethodDeclaration))
+			{
+				methodDeclarations.Add(methodDeclaration);
+			}
+
+			return new TestFileContext(
+				document,
+				className,
+				namespaceDeclarationSyntax.Name.ToString(),
+				methodDeclarations,
+				usingNamespaces);
+		}
+
 		private async Task<TestGenerationContext> CollectTestGenerationContextAsync(
 			ProjectItemSummary selectedFile, 
 			string targetProjectNamespace, 
 			TestFramework testFramework,
-			MockFramework mockFramework)
+			MockFramework mockFramework,
+			EnvDTE80.CodeFunction2 selectedFunction = null)
 		{
 			Microsoft.CodeAnalysis.Solution solution = CreateUnitTestBoilerplateCommandPackage.VisualStudioWorkspace.CurrentSolution;
 			DocumentId documentId = solution.GetDocumentIdsWithFilePath(selectedFile.FilePath).FirstOrDefault();
@@ -230,7 +301,8 @@ namespace UnitTestBoilerplate.Services
 			foreach (MethodDeclarationSyntax methodDeclaration in
 				firstClassDeclaration.ChildNodes().Where(
 					n => n.Kind() == SyntaxKind.MethodDeclaration
-					&& ((MethodDeclarationSyntax)n).Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword))))
+					&& ((MethodDeclarationSyntax)n).Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword))
+					&& (selectedFunction == null || ((MethodDeclarationSyntax)n).Identifier.Text == selectedFunction.Name)))
 			{
 				var parameterList = GetParameterListNodes(methodDeclaration).ToList();
 
@@ -354,13 +426,13 @@ namespace UnitTestBoilerplate.Services
 			return parameterListNode.ChildNodes().Where(n => n.Kind() == SyntaxKind.Parameter).Cast<ParameterSyntax>();
 		}
 
-		private async Task<TestGenerationContext> CollectTestGenerationContextAsync(ProjectItemSummary selectedFile, EnvDTE.Project targetProject, TestFramework testFramework, MockFramework mockFramework)
+		private async Task<TestGenerationContext> CollectTestGenerationContextAsync(ProjectItemSummary selectedFile, EnvDTE.Project targetProject, TestFramework testFramework, MockFramework mockFramework, EnvDTE80.CodeFunction2 selectedFunction = null)
 		{
 			string targetProjectNamespace = targetProject.Properties.Item("DefaultNamespace").Value as string;
-			return await this.CollectTestGenerationContextAsync(selectedFile, targetProjectNamespace, testFramework, mockFramework);
+			return await this.CollectTestGenerationContextAsync(selectedFile, targetProjectNamespace, testFramework, mockFramework, selectedFunction);
 		}
 
-		private string GenerateUnitTestContents(TestGenerationContext context)
+		private string GenerateUnitTestContents(TestGenerationContext context, TestFileContext existingTestContext = null)
 		{
 			TestFramework testFramework = context.TestFramework;
 			MockFramework mockFramework = context.MockFramework;
@@ -375,7 +447,7 @@ namespace UnitTestBoilerplate.Services
 						return;
 					}
 
-					if (WriteContentToken(tokenName, propertyIndex, builder, context, fileTemplate))
+					if (WriteContentToken(tokenName, propertyIndex, builder, context, fileTemplate, existingTestContext))
 					{
 						return;
 					}
@@ -437,12 +509,12 @@ namespace UnitTestBoilerplate.Services
 			return true;
 		}
 
-		private bool WriteContentToken(string tokenName, int propertyIndex, StringBuilder builder, TestGenerationContext context, string fileTemplate)
+		private bool WriteContentToken(string tokenName, int propertyIndex, StringBuilder builder, TestGenerationContext context, string fileTemplate, TestFileContext existingTestContext = null)
 		{
 			switch (tokenName)
 			{
 				case "UsingStatements":
-					this.WriteUsings(builder, context);
+					this.WriteUsings(builder, context, existingTestContext);
 					break;
 
 				case "MockFieldDeclarations":
@@ -462,7 +534,7 @@ namespace UnitTestBoilerplate.Services
 					break;
 
 				case "TestMethods":
-					this.WriteTestMethods(builder, context);
+					this.WriteTestMethods(builder, context, existingTestContext);
 					break;
 
 				default:
@@ -702,10 +774,14 @@ namespace UnitTestBoilerplate.Services
 			builder.Append($"${tokenName}$");
 		}
 
-		private void WriteUsings(StringBuilder builder, TestGenerationContext context)
+		private void WriteUsings(StringBuilder builder, TestGenerationContext context, TestFileContext existingTestContext = null)
 		{
 			List<string> namespaces = new List<string>();
 			namespaces.AddRange(context.MockFramework.UsingNamespaces);
+			if (existingTestContext != null)
+			{
+				namespaces.AddRange(existingTestContext.UsingNamespaces);
+			}
 			namespaces.Add(context.TestFramework.UsingNamespace);
 			namespaces.Add(context.ClassNamespace);
 
@@ -857,8 +933,25 @@ namespace UnitTestBoilerplate.Services
 			builder.Append(")");
 		}
 
-		private void WriteTestMethods(StringBuilder builder, TestGenerationContext context)
+		private void WriteTestMethods(StringBuilder builder, TestGenerationContext context, TestFileContext existingTestContext = null)
 		{
+			if (existingTestContext != null)
+			{
+				// Preserve any existing unit test methods in pre-existing file
+				for (int i = 0; i < existingTestContext.MethodDeclarations.Count; i++)
+				{
+					var existingMethod = existingTestContext.MethodDeclarations[i];
+					builder.Append(existingMethod.ToFullString());
+
+					var usedMethodName = existingMethod.Identifier.ToString().Split('_').FirstOrDefault();
+					if (!existingTestContext.UsedTestMethodNames.Contains(usedMethodName))
+					{
+						existingTestContext.UsedTestMethodNames.Add(usedMethodName);
+					}
+				}
+				builder.AppendLine(); // Make a blank line
+			}
+
 			if (context.MethodDeclarations.Count == 0)
 			{
 				string testMethodEmptyTemplate = this.Settings.GetTemplate(context.TestFramework, context.MockFramework, TemplateType.TestMethodEmpty);
@@ -871,7 +964,10 @@ namespace UnitTestBoilerplate.Services
 			for (int i = 0; i < context.MethodDeclarations.Count; i++)
 			{
 				var methodDescriptor = context.MethodDeclarations[i];
-
+				if (existingTestContext != null && existingTestContext.UsedTestMethodNames.Contains(methodDescriptor.Name))
+				{
+					continue;
+				}
 				WriteTestMethod(builder, context, testMethodInvokeTemplate, methodDescriptor);
 
 				// Write separator line

@@ -163,7 +163,16 @@ namespace UnitTestBoilerplate.ViewModel
 						try
 						{
 							IList<ProjectItemSummary> selectedFiles = SolutionUtilities.GetSelectedFiles(this.dte);
-							await this.CreateUnitTestAsync(selectedFiles);
+							CodeFunction2 selectedFunction = SolutionUtilities.GetSelectedFunction(this.dte);
+							if (selectedFunction != null)
+							{
+								selectedFiles = new List<ProjectItemSummary>() { new ProjectItemSummary(selectedFunction.ProjectItem) };
+							}
+							else
+							{
+								selectedFiles = SolutionUtilities.GetSelectedFiles(this.dte);
+							}
+							await this.CreateUnitTestAsync(selectedFiles, selectedFunction);
 						}
 						catch (Exception exception)
 						{
@@ -173,7 +182,7 @@ namespace UnitTestBoilerplate.ViewModel
 			}
 		}
 
-		internal async Task CreateUnitTestAsync(IList<ProjectItemSummary> selectedFiles, bool addToProject = true)
+		internal async Task CreateUnitTestAsync(IList<ProjectItemSummary> selectedFiles, CodeFunction2 selectedFunction = null, bool addToProject = true)
 		{
 			var createdTestPaths = new List<string>();
 			foreach (ProjectItemSummary selectedFile in selectedFiles)
@@ -182,7 +191,8 @@ namespace UnitTestBoilerplate.ViewModel
 					selectedFile,
 					this.SelectedProject.Project,
 					this.SelectedTestFramework,
-					this.SelectedMockFramework);
+					this.SelectedMockFramework,
+					selectedFunction);
 
 				createdTestPaths.Add(generatedTestPath);
 			}
@@ -192,6 +202,11 @@ namespace UnitTestBoilerplate.ViewModel
 				bool focusSet = false;
 				foreach (string createdTestPath in createdTestPaths)
 				{
+					if (File.Exists(createdTestPath))
+					{
+						continue;	// Skip adding if path already exists in solution
+					}
+
 					// Add the file to project
 					ProjectItem testItem = this.SelectedProject.Project.ProjectItems.AddFromFile(createdTestPath);
 

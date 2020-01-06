@@ -9,14 +9,16 @@ namespace UnitTestBoilerplate.Services
 			ProjectItemSummary selectedFile,
 			EnvDTE.Project targetProject, 
 			TestFramework testFramework,
-			MockFramework mockFramework);
+			MockFramework mockFramework,
+			EnvDTE80.CodeFunction2 selectedFunction = null);
 
 		Task GenerateUnitTestFileAsync(
 			ProjectItemSummary selectedFile,
 			string targetFilePath,
 			string targetProjectNamespace,
 			TestFramework testFramework,
-			MockFramework mockFramework);
+			MockFramework mockFramework,
+			EnvDTE80.CodeFunction2 selectedFunction = null);
 
 		string GetRelativePath(ProjectItemSummary selectedFile);
 	}
